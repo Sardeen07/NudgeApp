@@ -1,0 +1,1481 @@
+import SwiftUI
+
+// MARK: - Main App Entry
+@main
+struct NudgeApp: App {
+    @StateObject private var authManager = AuthenticationManager.shared
+    @AppStorage("isDarkMode") private var isDarkMode = false
+    
+    var body: some Scene {
+        WindowGroup {
+            Group {
+                if authManager.isAuthenticated {
+                    DashboardView()
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .trailing).combined(with: .opacity),
+                            removal: .move(edge: .leading).combined(with: .opacity)
+                        ))
+                } else {
+                    WelcomeView()
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .leading).combined(with: .opacity),
+                            removal: .move(edge: .trailing).combined(with: .opacity)
+                        ))
+                }
+            }
+            .animation(.spring(response: 0.5, dampingFraction: 0.8), value: authManager.isAuthenticated)
+            .preferredColorScheme(isDarkMode ? .dark : .light)
+        }
+    }
+}
+
+// MARK: - Authentication Manager
+class AuthenticationManager: ObservableObject {
+    static let shared = AuthenticationManager()
+    
+    @Published var isAuthenticated = false
+    @Published var currentUser: User?
+    @Published var verificationCode: String = ""
+    
+    private init() {
+        checkAuthStatus()
+    }
+    
+    func checkAuthStatus() {
+        if let email = UserDefaults.standard.string(forKey: "loggedInEmail") {
+            fetchUserData(email: email)
+            isAuthenticated = true
+        }
+    }
+    
+    func sendVerificationCode(to phoneNumber: String, completion: @escaping (Bool, String) -> Void) {
+        let code = String(format: "%06d", Int.random(in: 100000...999999))
+        verificationCode = code
+        UserDefaults.standard.set(code, forKey: "temp_verification_code")
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print("📱 SMS VERIFICATION CODE")
+            print("To: \(phoneNumber)")
+            print("Code: \(code)")
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            completion(true, "Verification code sent!")
+        }
+    }
+    
+    func verifyCode(_ code: String, completion: @escaping (Bool, String) -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            let savedCode = UserDefaults.standard.string(forKey: "temp_verification_code") ?? ""
+            if code == savedCode {
+                UserDefaults.standard.removeObject(forKey: "temp_verification_code")
+                completion(true, "Phone verified!")
+            } else {
+                completion(false, "Invalid code")
+            }
+        }
+    }
+    
+    func createAccount(email: String, password: String, completion: @escaping (Bool, String) -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            if UserDefaults.standard.string(forKey: "user_password_\(email)") != nil {
+                completion(false, "Account already exists")
+                return
+            }
+            UserDefaults.standard.set(password, forKey: "user_password_\(email)")
+            UserDefaults.standard.set(email, forKey: "loggedInEmail")
+            completion(true, "Account created!")
+        }
+    }
+    
+    func signIn(email: String, password: String, completion: @escaping (Bool, String) -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            guard let savedPassword = UserDefaults.standard.string(forKey: "user_password_\(email)") else {
+                completion(false, "No account found")
+                return
+            }
+            if password == savedPassword {
+                UserDefaults.standard.set(email, forKey: "loggedInEmail")
+                self.fetchUserData(email: email)
+                self.isAuthenticated = true
+                completion(true, "Welcome back!")
+            } else {
+                completion(false, "Incorrect password")
+            }
+        }
+    }
+    
+    func saveUserData(firstName: String, lastName: String, phoneNumber: String, email: String) {
+        let userData: [String: String] = [
+            "firstName": firstName,
+            "lastName": lastName,
+            "phoneNumber": phoneNumber,
+            "email": email
+        ]
+        UserDefaults.standard.set(userData, forKey: "user_data_\(email)")
+        self.currentUser = User(
+            id: UUID().uuidString,
+            firstName: firstName,
+            lastName: lastName,
+            phoneNumber: phoneNumber,
+            email: email
+        )
+    }
+    
+    func fetchUserData(email: String) {
+        if let userData = UserDefaults.standard.dictionary(forKey: "user_data_\(email)") as? [String: String] {
+            self.currentUser = User(
+                id: UUID().uuidString,
+                firstName: userData["firstName"] ?? "",
+                lastName: userData["lastName"] ?? "",
+                phoneNumber: userData["phoneNumber"] ?? "",
+                email: userData["email"] ?? email
+            )
+        }
+    }
+    
+    func signOut() {
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+            UserDefaults.standard.removeObject(forKey: "loggedInEmail")
+            isAuthenticated = false
+            currentUser = nil
+        }
+    }
+}
+
+struct User {
+    let id: String
+    let firstName: String
+    let lastName: String
+    let phoneNumber: String
+    let email: String
+}
+
+// MARK: - Welcome View
+struct WelcomeView: View {
+    @State private var showContent = false
+    
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 40) {
+                Spacer()
+                
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                gradient: Gradient(colors: [Color.purple.opacity(0.3), Color.blue.opacity(0.3)]),
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 120, height: 120)
+                        .scaleEffect(showContent ? 1 : 0.5)
+                        .blur(radius: showContent ? 0 : 10)
+                    
+                    Image(systemName: "bell.badge.fill")
+                        .font(.system(size: 60))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [.purple, .blue],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .scaleEffect(showContent ? 1 : 0.5)
+                }
+                .padding(.bottom, 20)
+                
+                VStack(spacing: 12) {
+                    Text("Welcome to Nudge")
+                        .font(.system(size: 36, weight: .bold))
+                        .multilineTextAlignment(.center)
+                        .offset(y: showContent ? 0 : 20)
+                        .opacity(showContent ? 1 : 0)
+                    
+                    Text("Gentle reminders to save and stay on track.")
+                        .font(.system(size: 18))
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 40)
+                        .offset(y: showContent ? 0 : 20)
+                        .opacity(showContent ? 1 : 0)
+                }
+                
+                Spacer()
+                
+                VStack(spacing: 16) {
+                    NavigationLink(destination: SignUpOptionsView()) {
+                        Text("Get Started")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity, minHeight: 56)
+                            .background(
+                                LinearGradient(
+                                    gradient: Gradient(colors: [Color.purple, Color.blue]),
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .cornerRadius(16)
+                            .shadow(color: .purple.opacity(0.3), radius: 10, x: 0, y: 5)
+                    }
+                    .buttonStyle(ScaleButtonStyle())
+                    
+                    NavigationLink(destination: SignInView()) {
+                        Text("Already have an account? Sign In")
+                            .font(.system(size: 16))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.top, 8)
+                }
+                .padding(.horizontal, 30)
+                .padding(.bottom, 40)
+                .offset(y: showContent ? 0 : 30)
+                .opacity(showContent ? 1 : 0)
+            }
+            .onAppear {
+                withAnimation(.spring(response: 0.8, dampingFraction: 0.8).delay(0.1)) {
+                    showContent = true
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Sign Up Options
+struct SignUpOptionsView: View {
+    var body: some View {
+        VStack(spacing: 30) {
+            Spacer()
+            
+            VStack(spacing: 12) {
+                Text("Create an account")
+                    .font(.system(size: 32, weight: .bold))
+                
+                Text("Choose how you'd like to sign up")
+                    .font(.system(size: 16))
+                    .foregroundColor(.secondary)
+            }
+            .transition(.scale.combined(with: .opacity))
+            
+            Spacer()
+            
+            VStack(spacing: 16) {
+                NavigationLink(destination: EmailEntryView()) {
+                    HStack {
+                        Image(systemName: "envelope.fill")
+                            .font(.title3)
+                        Text("Sign Up with Email")
+                            .font(.system(size: 17, weight: .semibold))
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                    }
+                    .foregroundColor(.white)
+                    .padding()
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .background(Color.purple)
+                    .cornerRadius(16)
+                }
+                .buttonStyle(ScaleButtonStyle())
+                
+                NavigationLink(destination: PhoneNumberView(isSignUp: true)) {
+                    HStack {
+                        Image(systemName: "phone.fill")
+                            .font(.title3)
+                        Text("Continue with Phone Number")
+                            .font(.system(size: 17, weight: .semibold))
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                    }
+                    .foregroundColor(.purple)
+                    .padding()
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .background(Color.purple.opacity(0.1))
+                    .cornerRadius(16)
+                }
+                .buttonStyle(ScaleButtonStyle())
+                
+                HStack {
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.3))
+                        .frame(height: 1)
+                    Text("or")
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 12)
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.3))
+                        .frame(height: 1)
+                }
+                .padding(.vertical, 8)
+                
+                NavigationLink(destination: SignInView()) {
+                    HStack {
+                        Text("Already have an account?")
+                            .foregroundColor(.secondary)
+                        Text("Sign In")
+                            .foregroundColor(.purple)
+                            .fontWeight(.semibold)
+                    }
+                    .font(.system(size: 16))
+                }
+            }
+            .padding(.horizontal, 30)
+            
+            Spacer()
+        }
+        .navigationTitle("Sign Up")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - Email Entry
+struct EmailEntryView: View {
+    @State private var email = ""
+    @State private var password = ""
+    @State private var showingAlert = false
+    @State private var alertMessage = ""
+    @State private var navigateToName = false
+    
+    var body: some View {
+        VStack(spacing: 30) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("What's your email?")
+                    .font(.system(size: 28, weight: .bold))
+                
+                Text("We'll use this to create your account")
+                    .font(.system(size: 16))
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 30)
+            .padding(.top, 40)
+            
+            VStack(spacing: 16) {
+                FloatingTextField(title: "Email Address", text: $email, keyboardType: .emailAddress)
+                FloatingTextField(title: "Create Password", text: $password, isSecure: true)
+            }
+            .padding(.horizontal, 30)
+            
+            Spacer()
+            
+            Button(action: handleContinue) {
+                Text("Continue")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .background(isFormValid ? Color.purple : Color.secondary)
+                    .cornerRadius(16)
+            }
+            .disabled(!isFormValid)
+            .buttonStyle(ScaleButtonStyle())
+            .padding(.horizontal, 30)
+            .padding(.bottom, 30)
+            
+            NavigationLink(destination: LegalNameView(email: email, password: password), isActive: $navigateToName) {
+                EmptyView()
+            }
+        }
+        .navigationTitle("Sign Up")
+        .navigationBarTitleDisplayMode(.inline)
+        .alert(isPresented: $showingAlert) {
+            Alert(title: Text("Error"), message: Text(alertMessage), dismissButton: .default(Text("OK")))
+        }
+    }
+    
+    var isFormValid: Bool {
+        !email.isEmpty && email.contains("@") && password.count >= 6
+    }
+    
+    func handleContinue() {
+        guard isFormValid else { return }
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+            navigateToName = true
+        }
+    }
+}
+
+// MARK: - Legal Name
+struct LegalNameView: View {
+    let email: String
+    let password: String
+    
+    @State private var firstName = ""
+    @State private var lastName = ""
+    @State private var navigateToPhone = false
+    
+    var body: some View {
+        VStack(spacing: 30) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("What's your legal name?")
+                    .font(.system(size: 28, weight: .bold))
+                
+                Text("This helps us keep your account secure")
+                    .font(.system(size: 16))
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 30)
+            .padding(.top, 40)
+            
+            VStack(spacing: 16) {
+                FloatingTextField(title: "First Name", text: $firstName)
+                FloatingTextField(title: "Last Name", text: $lastName)
+            }
+            .padding(.horizontal, 30)
+            
+            Spacer()
+            
+            Button(action: handleContinue) {
+                Text("Continue")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .background(isFormValid ? Color.purple : Color.secondary)
+                    .cornerRadius(16)
+            }
+            .disabled(!isFormValid)
+            .buttonStyle(ScaleButtonStyle())
+            .padding(.horizontal, 30)
+            .padding(.bottom, 30)
+            
+            NavigationLink(
+                destination: PhoneNumberView(
+                    isSignUp: true,
+                    email: email,
+                    password: password,
+                    firstName: firstName,
+                    lastName: lastName
+                ),
+                isActive: $navigateToPhone
+            ) {
+                EmptyView()
+            }
+        }
+        .navigationTitle("Legal Name")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+    
+    var isFormValid: Bool {
+        !firstName.isEmpty && !lastName.isEmpty
+    }
+    
+    func handleContinue() {
+        guard isFormValid else { return }
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+            navigateToPhone = true
+        }
+    }
+}
+
+// MARK: - Phone Number
+struct PhoneNumberView: View {
+    let isSignUp: Bool
+    var email: String = ""
+    var password: String = ""
+    var firstName: String = ""
+    var lastName: String = ""
+    
+    @StateObject private var authManager = AuthenticationManager.shared
+    @State private var phoneNumber = ""
+    @State private var isLoading = false
+    @State private var showingAlert = false
+    @State private var alertMessage = ""
+    @State private var navigateToVerification = false
+    
+    var body: some View {
+        VStack(spacing: 30) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Add your phone number")
+                    .font(.system(size: 28, weight: .bold))
+                
+                Text("We'll send a verification code to confirm it's you")
+                    .font(.system(size: 16))
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 30)
+            .padding(.top, 40)
+            
+            HStack {
+                Text("+1")
+                    .foregroundColor(.secondary)
+                    .padding(.leading, 16)
+                
+                TextField("(555) 123-4567", text: $phoneNumber)
+                    .keyboardType(.phonePad)
+                    .onChange(of: phoneNumber) { _, newValue in
+                        phoneNumber = formatPhoneNumber(newValue)
+                    }
+            }
+            .frame(height: 50)
+            .background(Color.secondary.opacity(0.1))
+            .cornerRadius(12)
+            .padding(.horizontal, 30)
+            
+            if isLoading {
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: .purple))
+                    .scaleEffect(1.2)
+            }
+            
+            Spacer()
+            
+            Button(action: handleSendCode) {
+                Text("Send Verification Code")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .background(isFormValid && !isLoading ? Color.purple : Color.secondary)
+                    .cornerRadius(16)
+            }
+            .disabled(!isFormValid || isLoading)
+            .buttonStyle(ScaleButtonStyle())
+            .padding(.horizontal, 30)
+            .padding(.bottom, 30)
+            
+            NavigationLink(
+                destination: CodeVerificationView(
+                    phoneNumber: fullPhoneNumber,
+                    email: email,
+                    password: password,
+                    firstName: firstName,
+                    lastName: lastName
+                ),
+                isActive: $navigateToVerification
+            ) {
+                EmptyView()
+            }
+        }
+        .navigationTitle("Phone Number")
+        .navigationBarTitleDisplayMode(.inline)
+        .alert(isPresented: $showingAlert) {
+            Alert(title: Text("Notice"), message: Text(alertMessage), dismissButton: .default(Text("OK")))
+        }
+    }
+    
+    var fullPhoneNumber: String {
+        "+1" + phoneNumber.filter { $0.isNumber }
+    }
+    
+    var isFormValid: Bool {
+        phoneNumber.filter { $0.isNumber }.count == 10
+    }
+    
+    func formatPhoneNumber(_ number: String) -> String {
+        let digits = number.filter { $0.isNumber }
+        let mask = "(XXX) XXX-XXXX"
+        var result = ""
+        var index = digits.startIndex
+        
+        for ch in mask where index < digits.endIndex {
+            if ch == "X" {
+                result.append(digits[index])
+                index = digits.index(after: index)
+            } else {
+                result.append(ch)
+            }
+        }
+        return result
+    }
+    
+    func handleSendCode() {
+        guard isFormValid else { return }
+        isLoading = true
+        
+        authManager.sendVerificationCode(to: fullPhoneNumber) { success, message in
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                isLoading = false
+                if success {
+                    navigateToVerification = true
+                } else {
+                    alertMessage = message
+                    showingAlert = true
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Code Verification
+struct CodeVerificationView: View {
+    let phoneNumber: String
+    let email: String
+    let password: String
+    let firstName: String
+    let lastName: String
+    
+    @StateObject private var authManager = AuthenticationManager.shared
+    @State private var codeBoxes: [String] = ["", "", "", "", "", ""]
+    @State private var isLoading = false
+    @State private var showingAlert = false
+    @State private var alertTitle = ""
+    @State private var alertMessage = ""
+    @State private var navigateToSuccess = false
+    @FocusState private var focusedIndex: Int?
+    
+    var body: some View {
+        VStack(spacing: 30) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Verify your number")
+                    .font(.system(size: 28, weight: .bold))
+                
+                Text("Enter the 6-digit code sent to")
+                    .font(.system(size: 16))
+                    .foregroundColor(.secondary)
+                
+                Text(phoneNumber)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.purple)
+                
+                Text("Check SMS")
+                    .font(.system(size: 14))
+                    .foregroundColor(.orange)
+                    .padding(.top, 4)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 30)
+            .padding(.top, 40)
+            
+            HStack(spacing: 12) {
+                ForEach(0..<6, id: \.self) { index in
+                    CodeBox(text: $codeBoxes[index], isFocused: focusedIndex == index)
+                        .focused($focusedIndex, equals: index)
+                        .onChange(of: codeBoxes[index]) { oldValue, newValue in
+                            handleCodeChange(index: index, oldValue: oldValue, newValue: newValue)
+                        }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 30)
+            
+            Button(action: resendCode) {
+                Text("Resend Code")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.purple)
+            }
+            
+            if isLoading {
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: .purple))
+                    .scaleEffect(1.2)
+                    .padding()
+            }
+            
+            Spacer()
+            
+            Button(action: handleVerify) {
+                Text("Verify")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .background(isCodeComplete && !isLoading ? Color.purple : Color.secondary)
+                    .cornerRadius(16)
+            }
+            .disabled(!isCodeComplete || isLoading)
+            .buttonStyle(ScaleButtonStyle())
+            .padding(.horizontal, 30)
+            .padding(.bottom, 30)
+            
+            NavigationLink(destination: SuccessView(), isActive: $navigateToSuccess) {
+                EmptyView()
+            }
+        }
+        .navigationTitle("Verification")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            focusedIndex = 0
+        }
+        .alert(isPresented: $showingAlert) {
+            Alert(title: Text(alertTitle), message: Text(alertMessage), dismissButton: .default(Text("OK")))
+        }
+    }
+    
+    var isCodeComplete: Bool {
+        codeBoxes.allSatisfy { !$0.isEmpty }
+    }
+    
+    func handleCodeChange(index: Int, oldValue: String, newValue: String) {
+        let filtered = newValue.filter { $0.isNumber }
+        
+        if filtered.count > 1 {
+            let digits = Array(filtered.prefix(6))
+            for (i, digit) in digits.enumerated() where index + i < 6 {
+                codeBoxes[index + i] = String(digit)
+            }
+            focusedIndex = min(index + digits.count, 5)
+        } else if filtered.count == 1 {
+            codeBoxes[index] = filtered
+            if index < 5 {
+                focusedIndex = index + 1
+            } else {
+                focusedIndex = nil
+            }
+        } else if newValue.isEmpty && oldValue.count == 1 {
+            codeBoxes[index] = ""
+            if index > 0 {
+                focusedIndex = index - 1
+            }
+        } else {
+            codeBoxes[index] = ""
+        }
+    }
+    
+    func handleVerify() {
+        guard isCodeComplete else { return }
+        let code = codeBoxes.joined()
+        isLoading = true
+        
+        authManager.verifyCode(code) { success, message in
+            if success {
+                if !email.isEmpty && !password.isEmpty {
+                    authManager.createAccount(email: email, password: password) { emailSuccess, _ in
+                        if emailSuccess {
+                            completeSignUp()
+                        }
+                    }
+                } else {
+                    completeSignUp()
+                }
+            } else {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                    isLoading = false
+                    alertTitle = "Verification Failed"
+                    alertMessage = message
+                    showingAlert = true
+                    clearCode()
+                }
+            }
+        }
+    }
+    
+    func completeSignUp() {
+        authManager.saveUserData(
+            firstName: firstName,
+            lastName: lastName,
+            phoneNumber: phoneNumber,
+            email: email
+        )
+        
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+            isLoading = false
+            navigateToSuccess = true
+        }
+    }
+    
+    func resendCode() {
+        isLoading = true
+        authManager.sendVerificationCode(to: phoneNumber) { success, message in
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                isLoading = false
+                alertTitle = success ? "Code Resent" : "Error"
+                alertMessage = success ? "Check the Xcode console" : message
+                showingAlert = true
+                clearCode()
+            }
+        }
+    }
+    
+    func clearCode() {
+        codeBoxes = ["", "", "", "", "", ""]
+        focusedIndex = 0
+    }
+}
+
+// MARK: - Success View
+struct SuccessView: View {
+    @StateObject private var authManager = AuthenticationManager.shared
+    @State private var scale: CGFloat = 0.5
+    @State private var opacity: Double = 0
+    @State private var rotation: Double = 0
+    
+    var body: some View {
+        VStack(spacing: 30) {
+            Spacer()
+            
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            gradient: Gradient(colors: [Color.green.opacity(0.2), Color.green.opacity(0.1)]),
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 150, height: 150)
+                    .scaleEffect(scale)
+                    .opacity(opacity)
+                
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 80))
+                    .foregroundColor(.green)
+                    .scaleEffect(scale)
+                    .opacity(opacity)
+                    .rotationEffect(.degrees(rotation))
+            }
+            .onAppear {
+                withAnimation(.spring(response: 0.6, dampingFraction: 0.6)) {
+                    scale = 1.0
+                    opacity = 1.0
+                }
+                withAnimation(.spring(response: 0.8, dampingFraction: 0.5).delay(0.2)) {
+                    rotation = 360
+                }
+            }
+            
+            VStack(spacing: 12) {
+                Text("You're all set!")
+                    .font(.system(size: 32, weight: .bold))
+                    .opacity(opacity)
+                
+                Text("Let's start saving smarter.")
+                    .font(.system(size: 18))
+                    .foregroundColor(.secondary)
+                    .opacity(opacity)
+            }
+            .animation(.easeIn(duration: 0.5).delay(0.3), value: opacity)
+            
+            Spacer()
+            
+            Button(action: {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                    authManager.isAuthenticated = true
+                }
+            }) {
+                Text("Go to Dashboard")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .background(
+                        LinearGradient(
+                            gradient: Gradient(colors: [Color.purple, Color.blue]),
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .cornerRadius(16)
+                    .shadow(color: .purple.opacity(0.3), radius: 10, x: 0, y: 5)
+            }
+            .buttonStyle(ScaleButtonStyle())
+            .padding(.horizontal, 30)
+            .padding(.bottom, 30)
+            .opacity(opacity)
+            .animation(.easeIn(duration: 0.5).delay(0.6), value: opacity)
+        }
+        .navigationBarBackButtonHidden(true)
+    }
+}
+
+// MARK: - Sign In View
+struct SignInView: View {
+    @StateObject private var authManager = AuthenticationManager.shared
+    @State private var email = ""
+    @State private var password = ""
+    @State private var isLoading = false
+    @State private var showingAlert = false
+    @State private var alertMessage = ""
+    @State private var showContent = false
+    
+    var body: some View {
+        VStack(spacing: 30) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Welcome back")
+                    .font(.system(size: 32, weight: .bold))
+                    .offset(y: showContent ? 0 : 20)
+                    .opacity(showContent ? 1 : 0)
+                
+                Text("Sign in to continue")
+                    .font(.system(size: 16))
+                    .foregroundColor(.secondary)
+                    .offset(y: showContent ? 0 : 20)
+                    .opacity(showContent ? 1 : 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 30)
+            .padding(.top, 40)
+            
+            VStack(spacing: 16) {
+                FloatingTextField(title: "Email", text: $email, keyboardType: .emailAddress)
+                    .disabled(isLoading)
+                    .offset(y: showContent ? 0 : 20)
+                    .opacity(showContent ? 1 : 0)
+                
+                FloatingTextField(title: "Password", text: $password, isSecure: true)
+                    .disabled(isLoading)
+                    .offset(y: showContent ? 0 : 20)
+                    .opacity(showContent ? 1 : 0)
+            }
+            .padding(.horizontal, 30)
+            
+            if isLoading {
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: .purple))
+                    .scaleEffect(1.2)
+            }
+            
+            Spacer()
+            
+            Button(action: handleSignIn) {
+                Text("Sign In")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .background(isFormValid && !isLoading ? Color.purple : Color.secondary)
+                    .cornerRadius(16)
+                    .shadow(color: isFormValid ? .purple.opacity(0.3) : .clear, radius: 10, x: 0, y: 5)
+            }
+            .disabled(!isFormValid || isLoading)
+            .buttonStyle(ScaleButtonStyle())
+            .padding(.horizontal, 30)
+            .padding(.bottom, 30)
+            .offset(y: showContent ? 0 : 20)
+            .opacity(showContent ? 1 : 0)
+        }
+        .navigationTitle("Sign In")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.1)) {
+                showContent = true
+            }
+        }
+        .alert(isPresented: $showingAlert) {
+            Alert(title: Text("Error"), message: Text(alertMessage), dismissButton: .default(Text("OK")))
+        }
+    }
+    
+    var isFormValid: Bool {
+        !email.isEmpty && email.contains("@") && !password.isEmpty
+    }
+    
+    func handleSignIn() {
+        guard isFormValid else { return }
+        isLoading = true
+        
+        authManager.signIn(email: email, password: password) { success, message in
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                isLoading = false
+                if !success {
+                    alertMessage = message
+                    showingAlert = true
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Dashboard View
+struct DashboardView: View {
+    @StateObject private var authManager = AuthenticationManager.shared
+    @AppStorage("isDarkMode") private var isDarkMode = false
+    @State private var showContent = false
+    @State private var selectedTab = 0
+    
+    var body: some View {
+        TabView(selection: $selectedTab) {
+            HomeTabView(isDarkMode: $isDarkMode)
+                .tabItem {
+                    Label("Home", systemImage: "house.fill")
+                }
+                .tag(0)
+            
+            StatsTabView()
+                .tabItem {
+                    Label("Stats", systemImage: "chart.bar.fill")
+                }
+                .tag(1)
+            
+            GoalsTabView()
+                .tabItem {
+                    Label("Goals", systemImage: "target")
+                }
+                .tag(2)
+            
+            SettingsTabView(isDarkMode: $isDarkMode)
+                .tabItem {
+                    Label("Settings", systemImage: "gearshape.fill")
+                }
+                .tag(3)
+        }
+        .accentColor(.purple)
+    }
+}
+
+// MARK: - Home Tab
+struct HomeTabView: View {
+    @StateObject private var authManager = AuthenticationManager.shared
+    @Binding var isDarkMode: Bool
+    @State private var showContent = false
+    @State private var savingsAmount: Double = 0
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(spacing: 24) {
+                    // Welcome Header
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Welcome back,")
+                            .font(.system(size: 20))
+                            .foregroundColor(.secondary)
+                            .offset(x: showContent ? 0 : -20)
+                            .opacity(showContent ? 1 : 0)
+                        
+                        Text(authManager.currentUser?.firstName ?? "User")
+                            .font(.system(size: 32, weight: .bold))
+                            .offset(x: showContent ? 0 : -20)
+                            .opacity(showContent ? 1 : 0)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 20)
+                    
+                    // Savings Card
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Total Savings")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(.white.opacity(0.8))
+                                
+                                Text("$\(String(format: "%.2f", savingsAmount))")
+                                    .font(.system(size: 36, weight: .bold))
+                                    .foregroundColor(.white)
+                            }
+                            
+                            Spacer()
+                            
+                            Image(systemName: "chart.line.uptrend.xyaxis")
+                                .font(.system(size: 40))
+                                .foregroundColor(.white.opacity(0.8))
+                        }
+                        
+                        Button(action: {
+                            withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                                savingsAmount += 10
+                            }
+                        }) {
+                            Text("Add $10")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(.purple)
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .background(Color.white)
+                                .cornerRadius(12)
+                        }
+                        .buttonStyle(ScaleButtonStyle())
+                    }
+                    .padding(24)
+                    .background(
+                        LinearGradient(
+                            gradient: Gradient(colors: [Color.purple, Color.blue]),
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .cornerRadius(20)
+                    .shadow(color: .purple.opacity(0.3), radius: 15, x: 0, y: 10)
+                    .padding(.horizontal, 20)
+                    .scaleEffect(showContent ? 1 : 0.9)
+                    .opacity(showContent ? 1 : 0)
+                    
+                    // Quick Actions
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Quick Actions")
+                            .font(.system(size: 20, weight: .semibold))
+                            .padding(.horizontal, 20)
+                            .offset(x: showContent ? 0 : -20)
+                            .opacity(showContent ? 1 : 0)
+                        
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
+                            QuickActionCard(icon: "bell.badge.fill", title: "Set Reminder", color: .orange)
+                            QuickActionCard(icon: "dollarsign.circle.fill", title: "Add Goal", color: .green)
+                            QuickActionCard(icon: "chart.bar.fill", title: "View Stats", color: .blue)
+                            QuickActionCard(icon: isDarkMode ? "sun.max.fill" : "moon.fill", title: isDarkMode ? "Light Mode" : "Dark Mode", color: isDarkMode ? .yellow : .indigo)
+                                .onTapGesture {
+                                    withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                                        isDarkMode.toggle()
+                                    }
+                                }
+                        }
+                        .padding(.horizontal, 20)
+                    }
+                    .offset(y: showContent ? 0 : 20)
+                    .opacity(showContent ? 1 : 0)
+                    
+                    // Recent Activity
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Recent Activity")
+                            .font(.system(size: 20, weight: .semibold))
+                            .padding(.horizontal, 20)
+                        
+                        if savingsAmount > 0 {
+                            VStack(spacing: 12) {
+                                ActivityRow(icon: "plus.circle.fill", title: "Added to savings", amount: "$10.00", color: .green)
+                            }
+                            .padding(.horizontal, 20)
+                        } else {
+                            EmptyActivityView()
+                        }
+                    }
+                    .padding(.bottom, 30)
+                    .offset(y: showContent ? 0 : 20)
+                    .opacity(showContent ? 1 : 0)
+                }
+            }
+            .navigationTitle("Dashboard")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: {
+                        authManager.signOut()
+                    }) {
+                        Image(systemName: "rectangle.portrait.and.arrow.right")
+                            .foregroundColor(.purple)
+                    }
+                    .buttonStyle(ScaleButtonStyle())
+                }
+            }
+        }
+        .onAppear {
+            withAnimation(.spring(response: 0.8, dampingFraction: 0.8).delay(0.1)) {
+                showContent = true
+            }
+        }
+    }
+}
+
+// MARK: - Stats Tab
+struct StatsTabView: View {
+    @State private var showContent = false
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(spacing: 24) {
+                    VStack(spacing: 16) {
+                        StatCard(title: "This Week", amount: "$0.00", icon: "calendar", color: .blue)
+                        StatCard(title: "This Month", amount: "$0.00", icon: "calendar.circle", color: .green)
+                        StatCard(title: "This Year", amount: "$0.00", icon: "chart.bar", color: .purple)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 20)
+                    .offset(y: showContent ? 0 : 20)
+                    .opacity(showContent ? 1 : 0)
+                }
+            }
+            .navigationTitle("Statistics")
+        }
+        .onAppear {
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.1)) {
+                showContent = true
+            }
+        }
+    }
+}
+
+// MARK: - Goals Tab
+struct GoalsTabView: View {
+    @State private var showContent = false
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(spacing: 24) {
+                    EmptyGoalsView()
+                        .offset(y: showContent ? 0 : 20)
+                        .opacity(showContent ? 1 : 0)
+                }
+                .padding(.top, 40)
+            }
+            .navigationTitle("Goals")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: {}) {
+                        Image(systemName: "plus.circle.fill")
+                            .foregroundColor(.purple)
+                            .font(.title2)
+                    }
+                    .buttonStyle(ScaleButtonStyle())
+                }
+            }
+        }
+        .onAppear {
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.1)) {
+                showContent = true
+            }
+        }
+    }
+}
+
+// MARK: - Settings Tab
+struct SettingsTabView: View {
+    @StateObject private var authManager = AuthenticationManager.shared
+    @Binding var isDarkMode: Bool
+    @State private var showContent = false
+    
+    var body: some View {
+        NavigationView {
+            List {
+                Section {
+                    HStack {
+                        Image(systemName: "person.circle.fill")
+                            .font(.system(size: 50))
+                            .foregroundColor(.purple)
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(authManager.currentUser?.firstName ?? "User")
+                                .font(.system(size: 20, weight: .semibold))
+                            Text(authManager.currentUser?.email ?? "")
+                                .font(.system(size: 14))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+                
+                Section("Appearance") {
+                    Toggle(isOn: $isDarkMode) {
+                        HStack {
+                            Image(systemName: isDarkMode ? "moon.fill" : "sun.max.fill")
+                                .foregroundColor(.purple)
+                            Text("Dark Mode")
+                        }
+                    }
+                    .tint(.purple)
+                }
+                
+                Section("Account") {
+                    Button(action: {}) {
+                        HStack {
+                            Image(systemName: "bell.badge.fill")
+                                .foregroundColor(.purple)
+                            Text("Notifications")
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    Button(action: {}) {
+                        HStack {
+                            Image(systemName: "lock.fill")
+                                .foregroundColor(.purple)
+                            Text("Privacy")
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                
+                Section {
+                    Button(action: {
+                        authManager.signOut()
+                    }) {
+                        HStack {
+                            Image(systemName: "arrow.right.square.fill")
+                                .foregroundColor(.red)
+                            Text("Sign Out")
+                                .foregroundColor(.red)
+                        }
+                    }
+                    .buttonStyle(ScaleButtonStyle())
+                }
+            }
+            .navigationTitle("Settings")
+        }
+        .onAppear {
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.1)) {
+                showContent = true
+            }
+        }
+    }
+}
+
+// MARK: - Supporting Views & Components
+
+struct FloatingTextField: View {
+    let title: String
+    @Binding var text: String
+    var keyboardType: UIKeyboardType = .default
+    var isSecure: Bool = false
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(.secondary)
+            
+            if isSecure {
+                SecureField("", text: $text)
+                    .padding()
+                    .background(Color.secondary.opacity(0.1))
+                    .cornerRadius(12)
+            } else {
+                TextField("", text: $text)
+                    .keyboardType(keyboardType)
+                    .autocapitalization(keyboardType == .emailAddress ? .none : .words)
+                    .padding()
+                    .background(Color.secondary.opacity(0.1))
+                    .cornerRadius(12)
+            }
+        }
+    }
+}
+
+struct CodeBox: View {
+    @Binding var text: String
+    let isFocused: Bool
+    
+    var body: some View {
+        TextField("", text: $text)
+            .keyboardType(.numberPad)
+            .multilineTextAlignment(.center)
+            .frame(width: 50, height: 60)
+            .background(Color.secondary.opacity(0.1))
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isFocused ? Color.purple : Color.secondary.opacity(0.3), lineWidth: 2)
+            )
+            .font(.system(size: 24, weight: .bold))
+            .scaleEffect(isFocused ? 1.05 : 1.0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isFocused)
+    }
+}
+
+struct QuickActionCard: View {
+    let icon: String
+    let title: String
+    let color: Color
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 28))
+                .foregroundColor(color)
+            
+            Text(title)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(.primary)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 100)
+        .background(Color.secondary.opacity(0.1))
+        .cornerRadius(16)
+    }
+}
+
+struct ActivityRow: View {
+    let icon: String
+    let title: String
+    let amount: String
+    let color: Color
+    
+    var body: some View {
+        HStack {
+            Image(systemName: icon)
+                .font(.title2)
+                .foregroundColor(color)
+                .frame(width: 40, height: 40)
+                .background(color.opacity(0.1))
+                .cornerRadius(10)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 16, weight: .medium))
+                Text("Just now")
+                    .font(.system(size: 14))
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+            
+            Text(amount)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(color)
+        }
+        .padding()
+        .background(Color.secondary.opacity(0.05))
+        .cornerRadius(12)
+    }
+}
+
+struct StatCard: View {
+    let title: String
+    let amount: String
+    let icon: String
+    let color: Color
+    
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title)
+                    .font(.system(size: 14))
+                    .foregroundColor(.secondary)
+                Text(amount)
+                    .font(.system(size: 28, weight: .bold))
+            }
+            
+            Spacer()
+            
+            Image(systemName: icon)
+                .font(.system(size: 32))
+                .foregroundColor(color)
+        }
+        .padding(20)
+        .background(Color.secondary.opacity(0.1))
+        .cornerRadius(16)
+    }
+}
+
+struct EmptyActivityView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "tray")
+                .font(.system(size: 40))
+                .foregroundColor(.secondary)
+            
+            Text("No activity yet")
+                .font(.system(size: 16))
+                .foregroundColor(.secondary)
+            
+            Text("Start saving to see your activity here")
+                .font(.system(size: 14))
+                .foregroundColor(.secondary.opacity(0.7))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 40)
+    }
+}
+
+struct EmptyGoalsView: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "target")
+                .font(.system(size: 60))
+                .foregroundColor(.purple)
+            
+            Text("No goals yet")
+                .font(.system(size: 20, weight: .semibold))
+            
+            Text("Tap + to create your first savings goal")
+                .font(.system(size: 16))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 40)
+    }
+}
+
+// MARK: - Custom Button Style
+struct ScaleButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: configuration.isPressed)
+    }
+}
+
+// MARK: - Navigation Transition Extension
+extension View {
+    func navigationTransition(_ transition: AnyTransition) -> some View {
+        self.transition(transition)
+    }
+}
